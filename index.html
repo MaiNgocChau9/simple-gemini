@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini API Chat - Siêu Nhẹ & Thông Minh</title>
+    <!-- Thư viện siêu nhẹ để Render Markdown -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* CSS Thô - Tối ưu cho máy yếu */
+        :root {
+            --bg-color: #f4f4f9;
+            --chat-bg: #ffffff;
+            --user-msg: #e3f2fd;
+            --bot-msg: #f8f9fa;
+            --border: #ccc;
+            --text: #333;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 10px 20px;
+            background: var(--bg-color);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .header {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        input, select, button, textarea {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        input[type="password"] { flex: 1; min-width: 200px; }
+        select { max-width: 250px; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; transition: 0.2s; white-space: nowrap; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
+        #save-key-btn { background: #28a745; }
+        #save-key-btn:hover { background: #218838; }
+
+        /* Vùng chat - Bắt buộc luôn hiện Scrollbar */
+        #chat-container {
+            flex: 1;
+            background: var(--chat-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 15px;
+            overflow-y: scroll; /* Luôn hiện scrollbar */
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            padding: 10px 15px;
+            border-radius: 8px;
+            max-width: 85%;
+            word-wrap: break-word;
+            line-height: 1.5;
+        }
+        
+        .message.user { background: var(--user-msg); align-self: flex-end; border-bottom-right-radius: 0; }
+        .message.model { background: var(--bot-msg); align-self: flex-start; border-bottom-left-radius: 0; border: 1px solid #eee; }
+        .message img { max-width: 100%; max-height: 300px; border-radius: 4px; display: block; margin-top: 8px; }
+        
+        /* Render Markdown CSS */
+        .message p { margin: 0 0 8px 0; }
+        .message p:last-child { margin: 0; }
+        .message pre { background: #2d2d2d; color: #f8f8f2; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+        .message code { background: #e9ecef; color: #d63384; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; font-family: monospace; }
+        .message pre code { background: none; color: inherit; padding: 0; }
+        .message table { border-collapse: collapse; width: 100%; margin-bottom: 8px; }
+        .message th, .message td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+
+        /* Vùng nhập liệu */
+        .input-area {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            align-items: flex-end;
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        textarea {
+            flex: 1;
+            resize: none;
+            height: 44px;
+            overflow-y: scroll; /* Luôn hiện scrollbar */
+            box-sizing: border-box;
+        }
+
+        #image-preview-container {
+            position: relative;
+            display: none;
+        }
+        #image-preview { max-height: 44px; border-radius: 4px; border: 1px solid #ccc; }
+        #remove-img {
+            position: absolute; top: -8px; right: -8px; background: red; color: white;
+            border-radius: 50%; width: 20px; height: 20px; text-align: center;
+            font-size: 12px; line-height: 20px; cursor: pointer; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <input type="password" id="api-key" placeholder="Dán API Key Gemini của bạn vào đây...">
+        <button id="save-key-btn" onclick="initModels()">Lưu & Tải</button>
+        <select id="model-select">
+            <option value="">-- Chưa tải Model --</option>
+        </select>
+        <button onclick="clearHistory()">Xóa lịch sử</button>
+    </div>
+
+    <div id="chat-container">
+        <div class="message model">Xin chào! Hãy dán API Key, ấn <b>"Lưu & Tải"</b> để lấy danh sách Model mới nhất từ Google. (Bạn có thể <b>Ctrl + V</b> để dán ảnh vào đây)</div>
+    </div>
+
+    <div class="input-area">
+        <div id="image-preview-container">
+            <img id="image-preview" src="" alt="preview">
+            <div id="remove-img" onclick="removeImage()">×</div>
+        </div>
+        <textarea id="user-input" placeholder="Nhập tin nhắn... (Shift + Enter xuống dòng, Enter để gửi, Ctrl + V dán ảnh)"></textarea>
+        <button id="send-btn" onclick="sendMessage()">Gửi</button>
+    </div>
+
+    <script>
+        const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/";
+        let chatHistory = [];
+        let pastedImage = null;
+
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const imgPreviewContainer = document.getElementById('image-preview-container');
+        const imgPreview = document.getElementById('image-preview');
+        const apiKeyInput = document.getElementById('api-key');
+        const modelSelect = document.getElementById('model-select');
+        const saveKeyBtn = document.getElementById('save-key-btn');
+
+        // Khởi chạy khi Load trang - Tải API Key từ Local Storage
+        window.onload = () => {
+            const savedKey = localStorage.getItem('gemini_api_key');
+            if (savedKey) {
+                apiKeyInput.value = savedKey;
+                initModels(); // Tự động lấy danh sách models
+            }
+        };
+
+        // Hàm Tải danh sách model động từ API
+        async function initModels() {
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                alert("Vui lòng nhập API Key!");
+                return;
+            }
+
+            // Lưu vào localStorage
+            localStorage.setItem('gemini_api_key', apiKey);
+            
+            saveKeyBtn.textContent = "Đang tải...";
+            saveKeyBtn.disabled = true;
+            modelSelect.innerHTML = '<option value="">Đang tải...</option>';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}models?key=${apiKey}`);
+                const data = await response.json();
+
+                if (data.error) throw new Error(data.error.message);
+
+                // Lọc các model hỗ trợ chat (generateContent) và tên có chứa 'gemini'
+                const geminiModels = data.models.filter(m => 
+                    m.supportedGenerationMethods.includes('generateContent') && 
+                    m.name.includes('gemini')
+                );
+
+                modelSelect.innerHTML = ''; // Xóa loading
+                if (geminiModels.length === 0) {
+                    modelSelect.innerHTML = '<option value="">Không có model phù hợp</option>';
+                    return;
+                }
+
+                // Render danh sách vào <select>
+                geminiModels.forEach(m => {
+                    const opt = document.createElement('option');
+                    // API trả về name dạng "models/gemini-1.5-flash", mình cắt đi để dùng
+                    opt.value = m.name.replace('models/', '');
+                    opt.textContent = m.displayName || m.name;
+                    modelSelect.appendChild(opt);
+                });
+
+                saveKeyBtn.textContent = "Đã Lưu";
+                
+            } catch (error) {
+                modelSelect.innerHTML = '<option value="">Lỗi tải Model</option>';
+                alert("Lỗi tải API Key: " + error.message);
+                saveKeyBtn.textContent = "Lưu & Tải";
+            } finally {
+                setTimeout(() => {
+                    saveKeyBtn.disabled = false;
+                    saveKeyBtn.textContent = "Lưu & Tải";
+                }, 2000);
+            }
+        }
+
+        // Bắt sự kiện Paste (Ctrl + V)
+        userInput.addEventListener('paste', (e) => {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (let item of items) {
+                if (item.type.indexOf("image") === 0) {
+                    const blob = item.getAsFile();
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        const base64Data = event.target.result.split(',')[1];
+                        pastedImage = {
+                            mimeType: item.type,
+                            data: base64Data,
+                            dataUrl: event.target.result
+                        };
+                        imgPreview.src = pastedImage.dataUrl;
+                        imgPreviewContainer.style.display = 'block';
+                    };
+                    reader.readAsDataURL(blob);
+                    e.preventDefault();
+                }
+            }
+        });
+
+        function removeImage() {
+            pastedImage = null;
+            imgPreviewContainer.style.display = 'none';
+            imgPreview.src = '';
+        }
+
+        function clearHistory() {
+            chatHistory = [];
+            chatContainer.innerHTML = '<div class="message model">Đã xóa lịch sử trò chuyện.</div>';
+        }
+
+        function appendMessage(role, text, imgUrl = null) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            
+            let contentHTML = text ? marked.parse(text) : '';
+            if (imgUrl) contentHTML += `<img src="${imgUrl}" alt="ảnh đính kèm">`;
+
+            div.innerHTML = contentHTML || '<div class="typing">...</div>';
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return div;
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text && !pastedImage) return;
+
+            const apiKey = apiKeyInput.value.trim();
+            const model = modelSelect.value;
+
+            if (!apiKey) return alert("Vui lòng nhập API Key!");
+            if (!model) return alert("Chưa có Model! Hãy ấn 'Lưu & Tải' trước.");
+
+            // Chuẩn bị parts
+            let parts = [];
+            if (text) parts.push({ text: text });
+            if (pastedImage) {
+                parts.push({
+                    inlineData: {
+                        mimeType: pastedImage.mimeType,
+                        data: pastedImage.data
+                    }
+                });
+            }
+
+            // In ra User UI
+            appendMessage('user', text, pastedImage ? pastedImage.dataUrl : null);
+            chatHistory.push({ role: 'user', parts: parts });
+
+            userInput.value = '';
+            removeImage();
+            sendBtn.disabled = true;
+
+            const loadingMsg = appendMessage('model', 'Đang suy nghĩ...');
+
+            try {
+                const url = `${API_BASE_URL}models/${model}:generateContent?key=${apiKey}`;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: chatHistory })
+                });
+
+                const data = await response.json();
+                loadingMsg.remove();
+
+                if (data.error) {
+                    appendMessage('model', `**Lỗi API:** ${data.error.message}`);
+                    chatHistory.pop();
+                } else if (data.candidates && data.candidates.length > 0) {
+                    const replyText = data.candidates[0].content.parts[0].text;
+                    appendMessage('model', replyText);
+                    chatHistory.push({ role: 'model', parts: [{ text: replyText }] });
+                }
+            } catch (error) {
+                loadingMsg.remove();
+                appendMessage('model', `**Lỗi kết nối:** ${error.message}`);
+                chatHistory.pop();
+            } finally {
+                sendBtn.disabled = false;
+                userInput.focus();
+            }
+        }
+
+        // Enter để gửi
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        // Enter để tải model nếu đang ở ô nhập Key
+        apiKeyInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                initModels();
+            }
+        });
+    </script>
+</body>
+</html>
